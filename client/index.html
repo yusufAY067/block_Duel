@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Block Duel</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Google Fonts for modern typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <!-- Top Bar with Economy Info -->
+        <header id="top-bar">
+            <h1>Block Duel</h1>
+            <div class="user-area">
+                <span id="user-display" class="hidden">Kullanıcı</span>
+                <button id="friends-toggle-btn" class="hidden btn-secondary small-btn" onclick="toggleSocialPanel()">👥 Arkadaşlar</button>
+                <div id="economy">
+                    <span class="coin-icon">💎</span> <span id="coin-balance">...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Auth Screen -->
+        <div id="auth-screen" class="screen active">
+            <h2>Block Duel'e Hoş Geldin</h2>
+            <div class="auth-form">
+                <input type="text" id="username" placeholder="Kullanıcı Adı" autocomplete="off">
+                <input type="password" id="password" placeholder="Şifre">
+                <div class="auth-buttons">
+                    <button onclick="login()" class="btn-primary">Giriş Yap</button>
+                    <button onclick="register()" class="btn-secondary">Kayıt Ol</button>
+                </div>
+                <p id="auth-msg" class="status-msg"></p>
+            </div>
+        </div>
+
+        <!-- Menu Screen -->
+        <div id="menu-screen" class="screen">
+            <h2>Hedef Puanı Seç</h2>
+            <p class="subtitle">Hedefe ilk ulaşan kazanır!</p>
+            
+            <div class="score-cards">
+                <div class="score-card" onclick="selectScore(500, this)">
+                    <div class="card-title">500 Puan</div>
+                    <div class="card-fee">Giriş: 100 💎</div>
+                </div>
+                <div class="score-card" onclick="selectScore(700, this)">
+                    <div class="card-title">700 Puan</div>
+                    <div class="card-fee">Giriş: 150 💎</div>
+                </div>
+                <div class="score-card" onclick="selectScore(1000, this)">
+                    <div class="card-title">1000 Puan</div>
+                    <div class="card-fee">Giriş: 200 💎</div>
+                </div>
+                <div class="score-card" onclick="selectScore(2000, this)">
+                    <div class="card-title">2000 Puan</div>
+                    <div class="card-fee">Giriş: 400 💎</div>
+                </div>
+                <div class="score-card" onclick="selectScore(3000, this)">
+                    <div class="card-title">3000 Puan</div>
+                    <div class="card-fee">Giriş: 500 💎</div>
+                </div>
+                <div class="score-card" onclick="selectScore(5000, this)">
+                    <div class="card-title">5000 Puan</div>
+                    <div class="card-fee">Giriş: 800 💎</div>
+                </div>
+            </div>
+
+            <button id="play-btn" class="btn-primary giant-btn" onclick="startMatch()" disabled>OYNA</button>
+            <p id="queue-status" class="status-msg"></p>
+        </div>
+
+        <!-- Game Screen -->
+        <div id="game-screen" class="screen">
+            <div class="game-header">
+                <div class="player-info">
+                    <div class="label">Sen</div>
+                    <div class="score" id="my-score">0</div>
+                </div>
+                <div class="timer-wrapper">
+                    <div class="timer" id="game-timer">03:00</div>
+                </div>
+                <div class="player-info right">
+                    <div class="label">Rakip</div>
+                    <div class="score" id="opponent-score">0</div>
+                </div>
+            </div>
+
+            <div class="game-container">
+                <div class="canvas-wrapper">
+                    <!-- Main Grid -->
+                    <div class="grid-glow-container">
+                        <canvas id="game-canvas" width="400" height="400"></canvas>
+                    </div>
+                    
+                    <!-- Shapes Container -->
+                    <div class="tray-container">
+                        <canvas id="shapes-canvas" width="400" height="150"></canvas>
+                    </div>
+                </div>
+
+                <div class="side-panel">
+                    <div class="opponent-mini">
+                        <h3>Rakip Grid</h3>
+                        <div class="opp-grid-glow">
+                            <canvas id="opponent-canvas" width="160" height="160"></canvas>
+                        </div>
+                    </div>
+                    
+                    <div id="combo-display" class="hidden neon-text">
+                        COMBO x<span id="combo-count">2</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Result Screen -->
+        <div id="result-screen" class="screen">
+            <div class="result-box glass-panel">
+                <h2 id="result-title">Oyun Bitti</h2>
+                <p id="result-reason">Sebep</p>
+                <div class="reward-info hidden" id="reward-info">
+                    Kazanılan: <span id="reward-amount">0</span> 💎
+                </div>
+                <button onclick="backToMenu()" class="btn-primary">Ana Menüye Dön</button>
+            </div>
+        </div>
+
+        <!-- Social Panel (Hidden by default, toggleable from header) -->
+        <div id="social-panel" class="glass-panel hidden">
+            <div class="social-header">
+                <h3>Arkadaşlarım</h3>
+                <button onclick="toggleSocialPanel()" class="close-btn">✖</button>
+            </div>
+            
+            <div class="add-friend-section">
+                <input type="text" id="friend-tag-input" placeholder="KullanıcıAdı#1234">
+                <button onclick="sendFriendRequest()" class="btn-primary small-btn">Ekle</button>
+            </div>
+            
+            <div class="friends-list-container">
+                <h4>Arkadaş Listesi</h4>
+                <ul id="friends-list">
+                    <!-- Dynamic list -->
+                </ul>
+            </div>
+            
+            <div class="friend-requests-container">
+                <h4>Gelen İstekler</h4>
+                <ul id="friend-requests-list">
+                    <!-- Dynamic list -->
+                </ul>
+            </div>
+        </div>
+
+        <!-- Challenge Modal -->
+        <div id="challenge-modal" class="glass-panel hidden">
+            <h3>Düello Teklifi Gönder</h3>
+            <p id="challenge-target-name">Hedef: ...</p>
+            
+            <div class="challenge-options">
+                <label>Hedef Puan:</label>
+                <select id="challenge-score-select">
+                    <option value="500">500 Puan</option>
+                    <option value="700">700 Puan</option>
+                    <option value="1000" selected>1000 Puan</option>
+                    <option value="2000">2000 Puan</option>
+                    <option value="3000">3000 Puan</option>
+                    <option value="5000">5000 Puan</option>
+                </select>
+            </div>
+            
+            <div class="challenge-options">
+                <label>Coin Ödüllü Mü? (Ranked)</label>
+                <select id="challenge-ranked-select">
+                    <option value="true">EVET (Giriş Ücretli)</option>
+                    <option value="false">HAYIR (Sadece Eğlence)</option>
+                </select>
+            </div>
+            
+            <div class="modal-buttons">
+                <button onclick="confirmSendChallenge()" class="btn-primary">Gönder</button>
+                <button onclick="closeChallengeModal()" class="btn-secondary">İptal</button>
+            </div>
+        </div>
+
+        <!-- Notifications Container -->
+        <div id="notifications"></div>
+
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="renderer.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "yusuf": {
+    "password": "yılmaz",
+    "coins": 675,
+    "tag": "2252",
+    "fullTag": "yusuf#2252",
+    "friends": [],
+    "friendRequests": []
+  },
+  "yusuf araz": {
+    "password": "yılmaz",
+    "coins": 1200
+  },
+  "araz": {
+    "password": "yılmaz",
+    "coins": 1075
+  },
+  "kerem": {
+    "password": "zeytun",
+    "coins": 900,
+    "tag": "5890",
+    "fullTag": "kerem#5890",
+    "friends": [],
+    "friendRequests": []
+  }
+}
