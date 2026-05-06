@@ -1,5 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const GameLogic = require('./gameLogic');
+const gameController = require('./controllers/gameController');
 
 const GAME_DURATION = 3 * 60 * 1000; // 3 minutes
 const TICK_RATE = 1000 / 10; // 10 FPS updates
@@ -8,10 +9,10 @@ class RoomManager {
     constructor(io) {
         this.io = io;
         this.rooms = {};
-        this.playerRooms = {}; // Map socketId to roomId
+        this.playerRooms = {};
     }
 
-    createRoom(player1Id, player2Id, targetScore, playerBalances, p1User, p2User, bracketConfig, isRanked = true) {
+    async createRoom(player1Id, player2Id, targetScore, p1User, p2User, bracketConfig, isRanked = true) {
         const roomId = uuidv4();
         
         const room = {
@@ -19,7 +20,6 @@ class RoomManager {
             targetScore,
             startTime: Date.now(),
             endTime: Date.now() + GAME_DURATION,
-            playerBalances, // Reference to global balances helper
             bracketConfig,
             isRanked,
             users: {
@@ -49,6 +49,9 @@ class RoomManager {
             duration: GAME_DURATION
         });
 
+        // Save to DB
+        await gameController.createActiveRoom(roomId, [p1User, p2User], targetScore, GAME_DURATION);
+
         // Start game loop
         room.interval = setInterval(() => this.updateRoom(roomId), TICK_RATE);
         console.log(`Room ${roomId} created for ${p1User} and ${p2User}`);
@@ -60,7 +63,6 @@ class RoomManager {
 
         const timeLeft = Math.max(0, room.endTime - Date.now());
         
-        // Prepare state payload
         const state = {
             timeLeft,
             players: {}
@@ -73,17 +75,14 @@ class RoomManager {
             const pState = pData.logic.getState();
             state.players[pId] = pState;
 
-            // Check win by target score
             if (pState.score >= room.targetScore) {
                 winnerId = pId;
                 reason = 'Target Score Reached';
             }
         }
 
-        // Send state to room
         this.io.to(roomId).emit('gameState', state);
 
-        // Check win by time
         if (timeLeft <= 0 && !winnerId) {
             const playerIds = Object.keys(room.players);
             const score1 = state.players[playerIds[0]].score;
@@ -115,12 +114,10 @@ class RoomManager {
         const effect = playerLogic.placeBlock(data.x, data.y, data.shapeIndex);
         
         if (effect && (effect.clearedRows.length > 0 || effect.clearedCols.length > 0)) {
-            // Emit visual effect trigger to the specific player
             this.io.to(playerId).emit('playEffect', effect);
         }
 
         if (effect && effect.gameOver) {
-            // This player has no moves left, they lose
             const winnerId = Object.keys(room.players).find(id => id !== playerId);
             this.endGame(roomId, winnerId, 'No Moves Left');
         }
@@ -133,12 +130,11 @@ class RoomManager {
         const room = this.rooms[roomId];
         if (!room) return;
 
-        // The remaining player wins
         const winnerId = Object.keys(room.players).find(id => id !== playerId);
         this.endGame(roomId, winnerId, 'Opponent Disconnected');
     }
 
-    endGame(roomId, winnerId, reason) {
+    async endGame(roomId, winnerId, reason) {
         const room = this.rooms[roomId];
         if (!room) return;
 
@@ -146,29 +142,39 @@ class RoomManager {
 
         const playerIds = Object.keys(room.players);
         
+        let winnerUsername = null;
+        if (winnerId && winnerId !== 'draw') {
+            winnerUsername = room.users[winnerId];
+        } else if (winnerId === 'draw') {
+            winnerUsername = 'draw';
+        }
+
         // Handle Economy
         if (room.isRanked) {
             if (winnerId && winnerId !== 'draw') {
-                const winnerUser = room.users[winnerId];
-                room.playerBalances.set(winnerUser, room.playerBalances.get(winnerUser) + room.bracketConfig.reward);
-                this.io.to(winnerId).emit('balanceUpdate', room.playerBalances.get(winnerUser));
+                const newBal = await gameController.updateBalance(winnerUsername, room.bracketConfig.reward);
+                this.io.to(winnerId).emit('balanceUpdate', newBal);
             } else if (winnerId === 'draw') {
-                // Refund
                 const u1 = room.users[playerIds[0]];
                 const u2 = room.users[playerIds[1]];
-                room.playerBalances.set(u1, room.playerBalances.get(u1) + room.bracketConfig.refund);
-                room.playerBalances.set(u2, room.playerBalances.get(u2) + room.bracketConfig.refund);
-                this.io.to(playerIds[0]).emit('balanceUpdate', room.playerBalances.get(u1));
-                this.io.to(playerIds[1]).emit('balanceUpdate', room.playerBalances.get(u2));
+                const bal1 = await gameController.updateBalance(u1, room.bracketConfig.refund);
+                const bal2 = await gameController.updateBalance(u2, room.bracketConfig.refund);
+                this.io.to(playerIds[0]).emit('balanceUpdate', bal1);
+                this.io.to(playerIds[1]).emit('balanceUpdate', bal2);
             }
         }
 
         this.io.to(roomId).emit('gameEnd', { 
             winnerId, 
             reason,
-            reward: room.bracketConfig.reward,
-            refund: room.bracketConfig.refund
+            reward: room.bracketConfig ? room.bracketConfig.reward : 0,
+            refund: room.bracketConfig ? room.bracketConfig.refund : 0
         });
+
+        // Record Match in DB
+        const pUsernames = [room.users[playerIds[0]], room.users[playerIds[1]]];
+        await gameController.recordMatch(pUsernames, winnerUsername, room.targetScore, room.isRanked);
+        await gameController.endActiveRoom(roomId);
 
         // Cleanup
         playerIds.forEach(id => {

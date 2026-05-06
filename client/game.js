@@ -1,4 +1,5 @@
-const socket = io();
+let socket = null;
+let jwtToken = null;
 
 // UI Elements
 const screens = {
@@ -54,52 +55,86 @@ let myFriends = [];
 let myFriendRequests = [];
 let currentChallengeTarget = null;
 
-socket.on('connect', () => {
-    myId = socket.id;
-    console.log('Connected with socket ID:', myId);
-});
+// --- Auth System (REST API) ---
 
-// --- Auth System ---
+async function apiCall(endpoint, data) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (jwtToken) {
+        headers['Authorization'] = `Bearer ${jwtToken}`;
+    }
+    const res = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(data)
+    });
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || 'API Hatası');
+    return result;
+}
 
-function login() {
+function connectSocket(token) {
+    socket = io({
+        auth: { token }
+    });
+
+    socket.on('connect', () => {
+        myId = socket.id;
+        console.log('Connected with socket ID:', myId);
+        socket.emit('tellFriendsOnline');
+    });
+
+    setupSocketListeners();
+}
+
+async function login() {
     const username = authUsernameInput.value.trim();
     const password = authPasswordInput.value;
     if (!username || !password) return;
     
     authMsg.innerText = "Giriş yapılıyor...";
-    socket.emit('login', { username, password });
+    try {
+        const res = await apiCall('/api/auth/login', { username, password });
+        handleAuthSuccess(res);
+    } catch(err) {
+        authMsg.innerText = err.message;
+    }
 }
 
-function register() {
+async function register() {
     const username = authUsernameInput.value.trim();
     const password = authPasswordInput.value;
     if (!username || !password) return;
     
     authMsg.innerText = "Kayıt olunuyor...";
-    socket.emit('register', { username, password });
+    try {
+        const res = await apiCall('/api/auth/register', { username, password });
+        handleAuthSuccess(res);
+    } catch(err) {
+        authMsg.innerText = err.message;
+    }
 }
 
-socket.on('authSuccess', (data) => {
-    myUsername = data.username;
-    myFullTag = data.fullTag;
-    coinBalanceEl.innerText = data.coins;
+function handleAuthSuccess(data) {
+    const user = data.user;
+    jwtToken = data.token;
     
-    userDisplay.innerText = data.fullTag;
+    myUsername = user.username;
+    myFullTag = user.fullTag;
+    coinBalanceEl.innerText = user.coins;
+    
+    userDisplay.innerText = user.fullTag;
     userDisplay.classList.remove('hidden');
     friendsToggleBtn.classList.remove('hidden');
     
-    myFriends = data.friends || [];
-    myFriendRequests = data.friendRequests || [];
+    myFriends = user.friends || [];
+    myFriendRequests = user.friendRequests || [];
     
     renderFriends();
     renderFriendRequests();
     
+    connectSocket(jwtToken);
     showScreen('menu');
-});
-
-socket.on('authError', (msg) => {
-    authMsg.innerText = msg;
-});
+}
 
 // --- Toast Notifications ---
 function showToast(msg, type = 'info', actions = null) {
@@ -133,21 +168,52 @@ function showToast(msg, type = 'info', actions = null) {
     notificationsEl.appendChild(toast);
 }
 
-// --- Social System ---
+// --- Social System (REST API) ---
 
 function toggleSocialPanel() {
     socialPanel.classList.toggle('hidden');
 }
 
-function sendFriendRequest() {
+async function sendFriendRequest() {
     const target = friendTagInput.value.trim();
     if (!target) return;
-    socket.emit('addFriend', target);
-    friendTagInput.value = '';
+    
+    try {
+        const res = await apiCall('/api/social/add-friend', { targetFullTag: target });
+        showToast(res.message, 'success');
+        friendTagInput.value = '';
+        if(socket) socket.emit('notifyFriendRequest', { targetUsername: res.targetUsername, meFullTag: res.meFullTag });
+    } catch(err) {
+        showToast(err.message, 'error');
+    }
 }
 
-socket.on('socialSuccess', (msg) => showToast(msg, 'success'));
-socket.on('socialError', (msg) => showToast(msg, 'error'));
+async function respondFriendRequest(requesterUsername, accept) {
+    try {
+        const res = await apiCall('/api/social/respond-request', { requesterUsername, accept });
+        myFriendRequests = res.meUpdatedRequests;
+        renderFriendRequests();
+        if(accept) {
+            fetchFriends(); // update my list
+            if(socket) socket.emit('notifyFriendAccept', { requesterUsername, myFullTag: res.myFullTag });
+        }
+        showToast(res.message, 'success');
+    } catch(err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function fetchFriends() {
+    try {
+        const res = await fetch('/api/social/friends', {
+            headers: { 'Authorization': `Bearer ${jwtToken}` }
+        });
+        const data = await res.json();
+        // Online statuses are sent by socket initially
+        myFriends = data.friends;
+        renderFriends();
+    } catch(err) {}
+}
 
 function renderFriends() {
     friendsListEl.innerHTML = '';
@@ -191,12 +257,12 @@ function renderFriendRequests() {
         const acceptBtn = document.createElement('button');
         acceptBtn.className = 'btn-primary small-btn';
         acceptBtn.innerText = '✓';
-        acceptBtn.onclick = () => socket.emit('respondFriendRequest', { requesterUsername: req.username, accept: true });
+        acceptBtn.onclick = () => respondFriendRequest(req.username, true);
         
         const rejectBtn = document.createElement('button');
         rejectBtn.className = 'btn-secondary small-btn';
         rejectBtn.innerText = '✖';
-        rejectBtn.onclick = () => socket.emit('respondFriendRequest', { requesterUsername: req.username, accept: false });
+        rejectBtn.onclick = () => respondFriendRequest(req.username, false);
         
         actionDiv.appendChild(acceptBtn);
         actionDiv.appendChild(rejectBtn);
@@ -205,36 +271,159 @@ function renderFriendRequests() {
     });
 }
 
-socket.on('friendListUpdate', (friends) => {
-    myFriends = friends;
-    renderFriends();
-});
+function setupSocketListeners() {
+    socket.on('socialSuccess', (msg) => showToast(msg, 'success'));
+    socket.on('socialError', (msg) => showToast(msg, 'error'));
 
-socket.on('friendRequestsUpdate', (requests) => {
-    myFriendRequests = requests;
-    renderFriendRequests();
-});
+    socket.on('friendListUpdateNeeded', () => {
+        fetchFriends();
+    });
 
-socket.on('friendStatusUpdate', (data) => {
-    const friend = myFriends.find(f => f.username === data.username);
-    if (friend) {
-        friend.isOnline = data.isOnline;
-        renderFriends();
-    }
-});
+    socket.on('friendStatusUpdate', (data) => {
+        const friend = myFriends.find(f => f.username === data.username);
+        if (friend) {
+            friend.isOnline = data.isOnline;
+            renderFriends();
+        }
+    });
 
-socket.on('friendRequestReceived', (req) => {
-    myFriendRequests.push(req);
-    renderFriendRequests();
-    showToast(`${req.fullTag} sana arkadaşlık isteği gönderdi.`, 'info');
-});
+    socket.on('friendRequestReceived', (req) => {
+        myFriendRequests.push(req);
+        renderFriendRequests();
+        showToast(`${req.fullTag} sana arkadaşlık isteği gönderdi.`, 'info');
+    });
+
+    // ... Challenge & Game Listeners ...
+    socket.on('challengeReceived', (data) => {
+        const typeStr = data.isRanked ? "Coinli (Ranked)" : "Eğlencesine (Unranked)";
+        showToast(`${data.challengerFullTag} seni düelloya davet ediyor! (${data.targetScore} Puan - ${typeStr})`, 'info', [
+            {
+                label: 'Kabul Et',
+                primary: true,
+                onClick: () => socket.emit('respondChallenge', { challengerUsername: data.challengerUsername, accept: true, targetScore: data.targetScore, isRanked: data.isRanked })
+            },
+            {
+                label: 'Reddet',
+                primary: false,
+                onClick: () => socket.emit('respondChallenge', { challengerUsername: data.challengerUsername, accept: false, targetScore: data.targetScore, isRanked: data.isRanked })
+            }
+        ]);
+    });
+
+    socket.on('balanceUpdate', (balance) => {
+        coinBalanceEl.innerText = balance;
+    });
+
+    socket.on('errorMsg', (msg) => {
+        showToast(msg, 'error');
+        if (msg.includes('bakiye')) {
+            playBtn.disabled = false;
+            queueStatusEl.innerText = '';
+        }
+    });
+
+    socket.on('queueStatus', (msg) => {
+        queueStatusEl.innerText = msg;
+    });
+
+    socket.on('matchFound', (data) => {
+        currentRoomId = data.roomId;
+        showScreen('game');
+        
+        socialPanel.classList.add('hidden');
+        challengeModal.classList.add('hidden');
+        
+        if (!renderer) {
+            renderer = new Renderer();
+        }
+        
+        myScoreEl.innerText = '0';
+        opponentScoreEl.innerText = '0';
+        comboDisplay.classList.add('hidden');
+    });
+
+    socket.on('gameState', (state) => {
+        if (!currentRoomId) return;
+
+        if (!opponentId) {
+            const ids = Object.keys(state.players);
+            opponentId = ids.find(id => id !== myId);
+        }
+
+        gameTimerEl.innerText = formatTime(state.timeLeft);
+
+        const myState = state.players[myId];
+        const opponentState = state.players[opponentId];
+
+        if (myState) {
+            if (myScoreEl.innerText !== myState.score.toString()) {
+                myScoreEl.innerText = myState.score;
+            }
+
+            if (myState.combo >= 2) {
+                comboDisplay.classList.remove('hidden');
+                comboCountEl.innerText = myState.combo;
+            } else {
+                comboDisplay.classList.add('hidden');
+            }
+        }
+
+        if (opponentState) {
+            opponentScoreEl.innerText = opponentState.score;
+        }
+
+        if (renderer) {
+            renderer.updateState(myState, opponentState);
+        }
+    });
+
+    socket.on('playEffect', (effectData) => {
+        const canvasContainer = document.getElementById('game-canvas');
+        canvasContainer.classList.remove('shake');
+        void canvasContainer.offsetWidth; 
+        canvasContainer.classList.add('shake');
+
+        if (renderer) {
+            renderer.triggerVisualEffects(effectData);
+        }
+    });
+
+    socket.on('gameEnd', (data) => {
+        currentRoomId = null;
+        opponentId = null;
+        
+        showScreen('result');
+        resultReason.innerText = data.reason || '';
+
+        resultTitle.className = ''; 
+        if (data.winnerId === myId) {
+            resultTitle.innerText = 'ZAFER!';
+            resultTitle.classList.add('win-title');
+            
+            if (data.reward) {
+                rewardAmountEl.innerText = data.reward;
+                rewardInfoEl.classList.remove('hidden');
+            }
+        } else if (data.winnerId === 'draw') {
+            resultTitle.innerText = 'BERABERE';
+            resultTitle.classList.add('draw-title');
+            if (data.refund) {
+                rewardAmountEl.innerText = data.refund + " (İade)";
+                rewardInfoEl.classList.remove('hidden');
+            }
+        } else {
+            resultTitle.innerText = 'MAĞLUBİYET';
+            resultTitle.classList.add('lose-title');
+        }
+    });
+}
 
 // --- Challenge System ---
 function openChallengeModal(targetUsername) {
     currentChallengeTarget = targetUsername;
     challengeTargetNameEl.innerText = `Hedef: ${targetUsername}`;
     challengeModal.classList.remove('hidden');
-    socialPanel.classList.add('hidden'); // hide social panel
+    socialPanel.classList.add('hidden');
 }
 
 function closeChallengeModal() {
@@ -243,7 +432,7 @@ function closeChallengeModal() {
 }
 
 function confirmSendChallenge() {
-    if (!currentChallengeTarget) return;
+    if (!currentChallengeTarget || !socket) return;
     
     const score = parseInt(challengeScoreSelect.value);
     const isRanked = challengeRankedSelect.value === 'true';
@@ -257,61 +446,23 @@ function confirmSendChallenge() {
     closeChallengeModal();
 }
 
-socket.on('challengeReceived', (data) => {
-    const typeStr = data.isRanked ? "Coinli (Ranked)" : "Eğlencesine (Unranked)";
-    showToast(`${data.challengerFullTag} seni düelloya davet ediyor! (${data.targetScore} Puan - ${typeStr})`, 'info', [
-        {
-            label: 'Kabul Et',
-            primary: true,
-            onClick: () => socket.emit('respondChallenge', { challengerUsername: data.challengerUsername, accept: true, targetScore: data.targetScore, isRanked: data.isRanked })
-        },
-        {
-            label: 'Reddet',
-            primary: false,
-            onClick: () => socket.emit('respondChallenge', { challengerUsername: data.challengerUsername, accept: false, targetScore: data.targetScore, isRanked: data.isRanked })
-        }
-    ]);
-});
-
-
 // --- Menu Logic ---
 function selectScore(score, element) {
     selectedTargetScore = score;
     
-    // Remove 'selected' class from all cards
     document.querySelectorAll('.score-card').forEach(el => el.classList.remove('selected'));
     
-    // Add to the clicked one
     element.classList.add('selected');
     
-    // Enable play button
     playBtn.disabled = false;
 }
 
 function startMatch() {
-    if (!selectedTargetScore) return;
+    if (!selectedTargetScore || !socket) return;
     socket.emit('joinQueue', selectedTargetScore);
     queueStatusEl.innerText = 'Kuyruğa giriliyor... (Rakip bekleniyor)';
     playBtn.disabled = true;
 }
-
-// --- Game Logic ---
-
-socket.on('balanceUpdate', (balance) => {
-    coinBalanceEl.innerText = balance;
-});
-
-socket.on('errorMsg', (msg) => {
-    showToast(msg, 'error');
-    if (msg.includes('bakiye')) {
-        playBtn.disabled = false;
-        queueStatusEl.innerText = '';
-    }
-});
-
-socket.on('queueStatus', (msg) => {
-    queueStatusEl.innerText = msg;
-});
 
 function showScreen(screenName) {
     Object.values(screens).forEach(s => s.classList.remove('active'));
@@ -332,104 +483,4 @@ function formatTime(ms) {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
-// Global renderer instance
 let renderer = null;
-
-socket.on('matchFound', (data) => {
-    currentRoomId = data.roomId;
-    showScreen('game');
-    
-    // Hide panels if open
-    socialPanel.classList.add('hidden');
-    challengeModal.classList.add('hidden');
-    
-    // Initialize renderer if not already done
-    if (!renderer) {
-        renderer = new Renderer();
-    }
-    
-    // Reset UI
-    myScoreEl.innerText = '0';
-    opponentScoreEl.innerText = '0';
-    comboDisplay.classList.add('hidden');
-});
-
-socket.on('gameState', (state) => {
-    if (!currentRoomId) return;
-
-    // Determine opponent ID dynamically if not set
-    if (!opponentId) {
-        const ids = Object.keys(state.players);
-        opponentId = ids.find(id => id !== myId);
-    }
-
-    // Update Timer
-    gameTimerEl.innerText = formatTime(state.timeLeft);
-
-    const myState = state.players[myId];
-    const opponentState = state.players[opponentId];
-
-    if (myState) {
-        // Animate score increment if changed
-        if (myScoreEl.innerText !== myState.score.toString()) {
-            myScoreEl.innerText = myState.score;
-        }
-
-        if (myState.combo >= 2) {
-            comboDisplay.classList.remove('hidden');
-            comboCountEl.innerText = myState.combo;
-        } else {
-            comboDisplay.classList.add('hidden');
-        }
-    }
-
-    if (opponentState) {
-        opponentScoreEl.innerText = opponentState.score;
-    }
-
-    // Pass state to renderer
-    if (renderer) {
-        renderer.updateState(myState, opponentState);
-    }
-});
-
-socket.on('playEffect', (effectData) => {
-    // Apply screen shake to the container
-    const canvasContainer = document.getElementById('game-canvas');
-    canvasContainer.classList.remove('shake');
-    void canvasContainer.offsetWidth; // trigger reflow
-    canvasContainer.classList.add('shake');
-
-    if (renderer) {
-        renderer.triggerVisualEffects(effectData);
-    }
-});
-
-socket.on('gameEnd', (data) => {
-    currentRoomId = null;
-    opponentId = null;
-    
-    showScreen('result');
-    resultReason.innerText = data.reason || '';
-
-    resultTitle.className = ''; // reset classes
-    if (data.winnerId === myId) {
-        resultTitle.innerText = 'ZAFER!';
-        resultTitle.classList.add('win-title');
-        
-        if (data.reward) {
-            rewardAmountEl.innerText = data.reward;
-            rewardInfoEl.classList.remove('hidden');
-        }
-    } else if (data.winnerId === 'draw') {
-        resultTitle.innerText = 'BERABERE';
-        resultTitle.classList.add('draw-title');
-        if (data.refund) {
-            rewardAmountEl.innerText = data.refund + " (İade)";
-            rewardInfoEl.classList.remove('hidden');
-        }
-    } else {
-        resultTitle.innerText = 'MAĞLUBİYET';
-        resultTitle.classList.add('lose-title');
-    }
-});
