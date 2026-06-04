@@ -41,6 +41,12 @@
             <h2>Hedef Puanı Seç</h2>
             <p class="subtitle">Hedefe ilk ulaşan kazanır!</p>
             
+            <div style="display: flex; gap: 10px; justify-content: center; margin-bottom: 20px;">
+                <button onclick="openProfileScreen()" class="btn-secondary small-btn">👤 Profilim</button>
+                <button onclick="openLeaderboardScreen()" class="btn-secondary small-btn">🏆 Liderlik</button>
+                <button onclick="openShopScreen()" class="btn-secondary small-btn">🛍️ Mağaza</button>
+            </div>
+            
             <div class="score-cards">
                 <div class="score-card" onclick="selectScore(500, this)">
                     <div class="card-title">500 Puan</div>
@@ -88,6 +94,11 @@
                 </div>
             </div>
 
+            <div id="match-type-banner" class="match-banner hidden">
+                <h3 id="match-type-title">Dostluk Düellosu</h3>
+                <p id="match-type-subtitle">Bu maçta coin kazanılmaz veya kaybedilmez.</p>
+            </div>
+
             <div class="game-container">
                 <div class="canvas-wrapper">
                     <!-- Main Grid -->
@@ -125,6 +136,112 @@
                     Kazanılan: <span id="reward-amount">0</span> 💎
                 </div>
                 <button onclick="backToMenu()" class="btn-primary">Ana Menüye Dön</button>
+            </div>
+        </div>
+
+        <!-- Profile Screen -->
+        <div id="profile-screen" class="screen">
+            <div class="profile-container glass-panel">
+                <button onclick="backToMenu()" style="position: absolute; top: 10px; right: 10px;" class="btn-secondary small-btn">←</button>
+                
+                <div class="profile-header">
+                    <h2 id="profile-username">Kullanıcı Adı</h2>
+                    <div class="profile-league" id="profile-league">Lig Bilgisi</div>
+                </div>
+
+                <div class="profile-stats">
+                    <div class="stat-box">
+                        <div class="stat-value" id="profile-rp">0</div>
+                        <div class="stat-label">RP</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="profile-wins">0</div>
+                        <div class="stat-label">Kazanış</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="profile-losses">0</div>
+                        <div class="stat-label">Kayıp</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="profile-streak">0</div>
+                        <div class="stat-label">Seri</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="profile-best-streak">0</div>
+                        <div class="stat-label">En İyi Seri</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" id="profile-highest-score">0</div>
+                        <div class="stat-label">En Yüksek Skor</div>
+                    </div>
+                </div>
+
+                <div class="achievements-section">
+                    <h3>Başarımlar</h3>
+                    <div class="achievements-list" id="achievements-list">
+                        <!-- Dinamik olarak dolacak -->
+                    </div>
+                </div>
+
+                <div class="cosmetics-section">
+                    <h3>💄 Aktif Kozmetikler</h3>
+                    <div class="cosmetics-grid">
+                        <div class="cosmetic-item">
+                            <div class="cosmetic-label">Tema</div>
+                            <div id="profile-theme" class="cosmetic-value">Klasik</div>
+                        </div>
+                        <div class="cosmetic-item">
+                            <div class="cosmetic-label">Efekt</div>
+                            <div id="profile-effect" class="cosmetic-value">Normal</div>
+                        </div>
+                        <div class="cosmetic-item">
+                            <div class="cosmetic-label">Çerçeve</div>
+                            <div id="profile-frame" class="cosmetic-value">Yok</div>
+                        </div>
+                        <div class="cosmetic-item">
+                            <div class="cosmetic-label">Rozet</div>
+                            <div id="profile-badge" class="cosmetic-value">Yok</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Leaderboard Screen -->
+        <div id="leaderboard-screen" class="screen">
+            <div class="leaderboard-container glass-panel">
+                <button onclick="backToMenu()" style="position: absolute; top: 10px; right: 10px;" class="btn-secondary small-btn">←</button>
+                
+                <h2>🏆 Liderlik Tablosu</h2>
+                
+                <div id="leaderboard-table" class="leaderboard-table">
+                    <!-- Dinamik olarak dolacak -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Shop Screen -->
+        <div id="shop-screen" class="screen">
+            <div class="shop-container glass-panel">
+                <button onclick="backToMenu()" style="position: absolute; top: 10px; right: 10px;" class="btn-secondary small-btn">←</button>
+                
+                <div class="shop-header">
+                    <h2>🛍️ Mağaza</h2>
+                    <div class="coin-display">💎 <span id="shop-coins">0</span></div>
+                </div>
+
+                <!-- Tabs -->
+                <div class="shop-tabs">
+                    <button class="shop-tab active" onclick="switchShopTab('themes', this)">🎨 Temalar</button>
+                    <button class="shop-tab" onclick="switchShopTab('effects', this)">⚡ Efektler</button>
+                    <button class="shop-tab" onclick="switchShopTab('frames', this)">🖼 Çerçeveler</button>
+                    <button class="shop-tab" onclick="switchShopTab('badges', this)">🏅 Rozetler</button>
+                </div>
+
+                <!-- Content -->
+                <div id="shop-content" class="shop-content">
+                    <!-- Dinamik olarak dolacak -->
+                </div>
             </div>
         </div>
 
@@ -172,13 +289,7 @@
                 </select>
             </div>
             
-            <div class="challenge-options">
-                <label>Coin Ödüllü Mü? (Ranked)</label>
-                <select id="challenge-ranked-select">
-                    <option value="true">EVET (Giriş Ücretli)</option>
-                    <option value="false">HAYIR (Sadece Eğlence)</option>
-                </select>
-            </div>
+
             
             <div class="modal-buttons">
                 <button onclick="confirmSendChallenge()" class="btn-primary">Gönder</button>

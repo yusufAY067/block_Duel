@@ -59,7 +59,22 @@ module.exports = {
                 userId,
                 username,
                 password: hashedPassword,
-                coins: 1000
+                coins: 1000,
+                wins: 0,
+                losses: 0,
+                highestScore: 0,
+                rankPoints: 0,
+                currentStreak: 0,
+                bestStreak: 0,
+                achievements: [],
+                ownedThemes: ['classic'],
+                selectedTheme: 'classic',
+                ownedEffects: ['normal'],
+                selectedEffect: 'normal',
+                ownedFrames: ['bronze'],
+                selectedFrame: 'bronze',
+                ownedBadges: [],
+                selectedBadge: null
             });
 
             await newUser.save();

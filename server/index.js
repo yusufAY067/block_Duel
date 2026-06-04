@@ -44,15 +44,43 @@ Object.keys(BRACKETS).forEach(score => {
 });
 
 const socketToUser = {};
-const userToSocket = {};
+const userToSockets = {};
 const activeChallenges = {};
 
-function getOnlineFriends(friendsArray, userToSocketMap) {
+function addSocketForUser(username, socketId) {
+    if (!userToSockets[username]) {
+        userToSockets[username] = new Set();
+    }
+    userToSockets[username].add(socketId);
+    return userToSockets[username].size === 1;
+}
+
+function removeSocketForUser(username, socketId) {
+    const sockets = userToSockets[username];
+    if (!sockets) return false;
+    sockets.delete(socketId);
+    if (sockets.size === 0) {
+        delete userToSockets[username];
+        return true;
+    }
+    return false;
+}
+
+function getAnySocketId(username) {
+    const sockets = userToSockets[username];
+    return sockets ? sockets.values().next().value : undefined;
+}
+
+function isUserOnline(username) {
+    return !!userToSockets[username] && userToSockets[username].size > 0;
+}
+
+function getOnlineFriends(friendsArray, userToSocketsMap) {
     if (!friendsArray) return [];
     return friendsArray.map(f => ({
         username: f.username,
         fullTag: f.fullTag,
-        isOnline: !!userToSocketMap[f.username]
+        isOnline: !!(userToSocketsMap[f.username] && userToSocketsMap[f.username].size)
     }));
 }
 
@@ -75,16 +103,19 @@ io.on('connection', (socket) => {
     console.log('User connected via Socket:', socket.user.username);
     
     socketToUser[socket.id] = socket.user.username;
-    userToSocket[socket.user.username] = socket.id;
+    const firstConnection = addSocketForUser(socket.user.username, socket.id);
 
     const state = {
         socketToUser,
-        userToSocket,
+        userToSockets,
         activeChallenges,
         queue,
         BRACKETS,
         roomManager,
-        getOnlineFriends
+        getOnlineFriends,
+        getAnySocketId,
+        removeSocketForUser,
+        isUserOnline
     };
 
     socketRoutes(io, socket, state);

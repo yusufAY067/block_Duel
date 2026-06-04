@@ -64,6 +64,25 @@ module.exports = {
             if (accept) {
                 if (!me.friends.includes(requester._id)) me.friends.push(requester._id);
                 if (!requester.friends.includes(me._id)) requester.friends.push(me._id);
+                
+                // Check first friend achievement
+                if (me.friends.length === 1 && !me.achievements.find(a => a.id === 'first_friend')) {
+                    me.achievements.push({
+                        id: 'first_friend',
+                        name: 'İlk Arkadaş',
+                        description: 'İlk arkadaşını ekledi',
+                        unlockedAt: new Date()
+                    });
+                }
+                if (requester.friends.length === 1 && !requester.achievements.find(a => a.id === 'first_friend')) {
+                    requester.achievements.push({
+                        id: 'first_friend',
+                        name: 'İlk Arkadaş',
+                        description: 'İlk arkadaşını ekledi',
+                        unlockedAt: new Date()
+                    });
+                }
+                
                 await me.save();
                 await requester.save();
             }
@@ -93,6 +112,35 @@ module.exports = {
                     fullTag: f.userId
                 }))
             });
+        } catch (err) {
+            res.status(500).json({ error: 'Sunucu hatası: ' + err.message });
+        }
+    },
+
+    async removeFriend(req, res) {
+        try {
+            const myUsername = req.user.username;
+            const { friendUsername } = req.body;
+
+            if (!friendUsername) {
+                return res.status(400).json({ error: 'Arkadaş kullanıcı adı belirtilmelidir.' });
+            }
+
+            const me = await User.findOne({ username: myUsername });
+            const friend = await User.findOne({ username: friendUsername });
+
+            if (!me || !friend) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
+            if (!me.friends.includes(friend._id)) {
+                return res.status(400).json({ error: 'Bu kullanıcı arkadaş listenizde değil.' });
+            }
+
+            me.friends = me.friends.filter(fId => !fId.equals(friend._id));
+            friend.friends = friend.friends.filter(fId => !fId.equals(me._id));
+
+            await me.save();
+            await friend.save();
+
+            res.json({ message: 'Arkadaş listesinden kaldırıldı.' });
         } catch (err) {
             res.status(500).json({ error: 'Sunucu hatası: ' + err.message });
         }

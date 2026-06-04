@@ -46,7 +46,8 @@ class RoomManager {
         this.io.to(roomId).emit('matchFound', {
             roomId,
             targetScore,
-            duration: GAME_DURATION
+            duration: GAME_DURATION,
+            isRanked: room.isRanked
         });
 
         // Save to DB
@@ -167,13 +168,18 @@ class RoomManager {
         this.io.to(roomId).emit('gameEnd', { 
             winnerId, 
             reason,
+            isRanked: room.isRanked,
             reward: room.bracketConfig ? room.bracketConfig.reward : 0,
             refund: room.bracketConfig ? room.bracketConfig.refund : 0
         });
 
         // Record Match in DB
         const pUsernames = [room.users[playerIds[0]], room.users[playerIds[1]]];
-        await gameController.recordMatch(pUsernames, winnerUsername, room.targetScore, room.isRanked);
+        const playerScores = playerIds.map(id => ({
+            username: room.users[id],
+            score: room.players[id].logic.getState().score
+        }));
+        await gameController.recordMatch(pUsernames, winnerUsername, room.targetScore, room.isRanked, playerScores);
         await gameController.endActiveRoom(roomId);
 
         // Cleanup

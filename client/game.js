@@ -1,12 +1,31 @@
 let socket = null;
 let jwtToken = null;
 
+const THEME_PALETTES = {
+    classic: { bgColor: '#0B0F19', primary: '#00F0FF', secondary: '#FF007F' },
+    neon_blue: { bgColor: '#0a0e27', primary: '#00D4FF', secondary: '#0099FF' },
+    purple_galaxy: { bgColor: '#1a0033', primary: '#DD00FF', secondary: '#8A2BE2' },
+    cyberpunk: { bgColor: '#0d0221', primary: '#FF006E', secondary: '#00D4FF' },
+    gold: { bgColor: '#1a1500', primary: '#FFD700', secondary: '#FFA500' },
+    lavender_world: { bgColor: '#2d1b4e', primary: '#E6B3FF', secondary: '#C77DFF' }
+};
+
+const SHOP_TYPE_MAP = {
+    themes: 'theme',
+    effects: 'effect',
+    frames: 'frame',
+    badges: 'badge'
+};
+
 // UI Elements
 const screens = {
     auth: document.getElementById('auth-screen'),
     menu: document.getElementById('menu-screen'),
     game: document.getElementById('game-screen'),
-    result: document.getElementById('result-screen')
+    result: document.getElementById('result-screen'),
+    profile: document.getElementById('profile-screen'),
+    leaderboard: document.getElementById('leaderboard-screen'),
+    shop: document.getElementById('shop-screen')
 };
 
 const coinBalanceEl = document.getElementById('coin-balance');
@@ -16,6 +35,10 @@ const opponentScoreEl = document.getElementById('opponent-score');
 const gameTimerEl = document.getElementById('game-timer');
 const comboDisplay = document.getElementById('combo-display');
 const comboCountEl = document.getElementById('combo-count');
+
+const matchTypeBanner = document.getElementById('match-type-banner');
+const matchTypeTitleEl = document.getElementById('match-type-title');
+const matchTypeSubtitleEl = document.getElementById('match-type-subtitle');
 
 const resultTitle = document.getElementById('result-title');
 const resultReason = document.getElementById('result-reason');
@@ -40,7 +63,6 @@ const notificationsEl = document.getElementById('notifications');
 const challengeModal = document.getElementById('challenge-modal');
 const challengeTargetNameEl = document.getElementById('challenge-target-name');
 const challengeScoreSelect = document.getElementById('challenge-score-select');
-const challengeRankedSelect = document.getElementById('challenge-ranked-select');
 
 // Game State
 let currentRoomId = null;
@@ -49,6 +71,7 @@ let opponentId = null;
 let myUsername = null;
 let myFullTag = null;
 let selectedTargetScore = null;
+let currentMatchIsRanked = true;
 
 // Social State
 let myFriends = [];
@@ -81,6 +104,7 @@ function connectSocket(token) {
         myId = socket.id;
         console.log('Connected with socket ID:', myId);
         socket.emit('tellFriendsOnline');
+        socket.emit('requestFriendStatuses');
     });
 
     setupSocketListeners();
@@ -203,15 +227,30 @@ async function respondFriendRequest(requesterUsername, accept) {
     }
 }
 
+async function removeFriend(friendUsername, friendFullTag) {
+    const confirmed = window.confirm('Bu kişiyi arkadaş listesinden kaldırmak istediğinize emin misiniz?');
+    if (!confirmed) return;
+
+    try {
+        const res = await apiCall('/api/social/remove-friend', { friendUsername });
+        showToast(res.message, 'success');
+        await fetchFriends();
+    } catch(err) {
+        showToast(err.message, 'error');
+    }
+}
+
 async function fetchFriends() {
     try {
         const res = await fetch('/api/social/friends', {
             headers: { 'Authorization': `Bearer ${jwtToken}` }
         });
         const data = await res.json();
-        // Online statuses are sent by socket initially
         myFriends = data.friends;
         renderFriends();
+        if (socket && socket.connected) {
+            socket.emit('requestFriendStatuses');
+        }
     } catch(err) {}
 }
 
@@ -224,19 +263,34 @@ function renderFriends() {
 
     myFriends.forEach(f => {
         const li = document.createElement('li');
+        const onlineEmoji = f.isOnline ? '🟢' : '🔴';
+        const statusText = f.isOnline ? 'online' : 'offline';
+
         li.innerHTML = `
             <div>
-                <span class="friend-status ${f.isOnline ? 'online' : 'offline'}"></span>
+                <span class="friend-status ${statusText}">${onlineEmoji}</span>
                 ${f.fullTag}
             </div>
         `;
+
+        const actions = document.createElement('div');
+        actions.className = 'friend-actions';
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'btn-secondary small-btn';
+        removeBtn.innerText = 'Arkadaşı Sil';
+        removeBtn.onclick = () => removeFriend(f.username, f.fullTag);
+        actions.appendChild(removeBtn);
+
         if (f.isOnline) {
             const challengeBtn = document.createElement('button');
             challengeBtn.className = 'btn-primary small-btn';
             challengeBtn.innerText = '⚔️ Düello';
             challengeBtn.onclick = () => openChallengeModal(f.username);
-            li.appendChild(challengeBtn);
+            actions.appendChild(challengeBtn);
         }
+
+        li.appendChild(actions);
         friendsListEl.appendChild(li);
     });
 }
@@ -293,9 +347,20 @@ function setupSocketListeners() {
         showToast(`${req.fullTag} sana arkadaşlık isteği gönderdi.`, 'info');
     });
 
+    socket.on('friendStatuses', (data) => {
+        if (!data || !data.friends) return;
+        data.friends.forEach(status => {
+            const friend = myFriends.find(f => f.username === status.username);
+            if (friend) {
+                friend.isOnline = status.isOnline;
+            }
+        });
+        renderFriends();
+    });
+
     // ... Challenge & Game Listeners ...
     socket.on('challengeReceived', (data) => {
-        const typeStr = data.isRanked ? "Coinli (Ranked)" : "Eğlencesine (Unranked)";
+        const typeStr = data.isRanked ? "Coinli (Ranked)" : "Dostluk Düellosu - Bu maçta coin kazanılmaz veya kaybedilmez.";
         showToast(`${data.challengerFullTag} seni düelloya davet ediyor! (${data.targetScore} Puan - ${typeStr})`, 'info', [
             {
                 label: 'Kabul Et',
@@ -328,6 +393,15 @@ function setupSocketListeners() {
 
     socket.on('matchFound', (data) => {
         currentRoomId = data.roomId;
+        currentMatchIsRanked = data.isRanked !== false;
+        if (!currentMatchIsRanked) {
+            matchTypeBanner.classList.remove('hidden');
+            matchTypeTitleEl.innerText = 'Dostluk Düellosu';
+            matchTypeSubtitleEl.innerText = 'Bu maçta coin kazanılmaz veya kaybedilmez.';
+        } else {
+            matchTypeBanner.classList.add('hidden');
+        }
+
         showScreen('game');
         
         socialPanel.classList.add('hidden');
@@ -396,18 +470,20 @@ function setupSocketListeners() {
         resultReason.innerText = data.reason || '';
 
         resultTitle.className = ''; 
+        rewardInfoEl.classList.add('hidden');
+
         if (data.winnerId === myId) {
             resultTitle.innerText = 'ZAFER!';
             resultTitle.classList.add('win-title');
             
-            if (data.reward) {
+            if (currentMatchIsRanked && data.reward) {
                 rewardAmountEl.innerText = data.reward;
                 rewardInfoEl.classList.remove('hidden');
             }
         } else if (data.winnerId === 'draw') {
             resultTitle.innerText = 'BERABERE';
             resultTitle.classList.add('draw-title');
-            if (data.refund) {
+            if (currentMatchIsRanked && data.refund) {
                 rewardAmountEl.innerText = data.refund + " (İade)";
                 rewardInfoEl.classList.remove('hidden');
             }
@@ -435,7 +511,7 @@ function confirmSendChallenge() {
     if (!currentChallengeTarget || !socket) return;
     
     const score = parseInt(challengeScoreSelect.value);
-    const isRanked = challengeRankedSelect.value === 'true';
+    const isRanked = false;
     
     socket.emit('sendChallenge', {
         targetUsername: currentChallengeTarget,
@@ -474,6 +550,272 @@ function backToMenu() {
     queueStatusEl.innerText = '';
     playBtn.disabled = false;
     rewardInfoEl.classList.add('hidden');
+}
+
+// --- Profile & Leaderboard ---
+async function openProfileScreen() {
+    const response = await fetch(`/api/profile/${myUsername}`, {
+        headers: { 'Authorization': `Bearer ${jwtToken}` }
+    });
+    
+    if (!response.ok) {
+        showToast('Profil yüklenemedi.', 'error');
+        return;
+    }
+
+    const profile = await response.json();
+    
+    document.getElementById('profile-username').innerText = profile.userId || profile.username;
+    document.getElementById('profile-rp').innerText = profile.rankPoints || 0;
+    document.getElementById('profile-wins').innerText = profile.wins || 0;
+    document.getElementById('profile-losses').innerText = profile.losses || 0;
+    document.getElementById('profile-streak').innerText = profile.currentStreak || 0;
+    document.getElementById('profile-best-streak').innerText = profile.bestStreak || 0;
+    document.getElementById('profile-highest-score').innerText = profile.highestScore || 0;
+
+    const leagues = {
+        BRONZE: { min: 0, max: 199, name: 'Bronz', emoji: '🥉' },
+        SILVER: { min: 200, max: 499, name: 'Gümüş', emoji: '🥈' },
+        GOLD: { min: 500, max: 999, name: 'Altın', emoji: '🥇' },
+        PLATINUM: { min: 1000, max: 1999, name: 'Platin', emoji: '💎' },
+        DIAMOND: { min: 2000, max: 3499, name: 'Elmas', emoji: '💠' },
+        MASTER: { min: 3500, max: Infinity, name: 'Usta', emoji: '👑' }
+    };
+
+    let currentLeague = leagues.BRONZE;
+    for (const league of Object.values(leagues)) {
+        if (profile.rankPoints >= league.min && profile.rankPoints <= league.max) {
+            currentLeague = league;
+            break;
+        }
+    }
+    
+    document.getElementById('profile-league').innerText = `${currentLeague.emoji} ${currentLeague.name}`;
+
+    const achievementsHtml = (profile.achievements || []).map(a => `
+        <div class="achievement-item">
+            <div class="achievement-name">${a.name}</div>
+            <div class="achievement-desc">${a.description}</div>
+        </div>
+    `).join('');
+    
+    document.getElementById('achievements-list').innerHTML = achievementsHtml || '<p class="text-muted">Henüz başarım yok.</p>';
+
+    applyTheme(profile.selectedTheme);
+
+    // Kozmetikleri göster
+    const themeNames = {
+        classic: 'Klasik',
+        neon_blue: 'Neon Mavi',
+        purple_galaxy: 'Mor Galaksi',
+        cyberpunk: 'Cyberpunk',
+        gold: 'Altın',
+        lavender_world: 'Lav Dünyası'
+    };
+    
+    const effectNames = {
+        normal: 'Normal',
+        electric: 'Elektrik',
+        flame: 'Alev',
+        frost: 'Buz',
+        starburst: 'Yıldız Patlaması'
+    };
+    
+    const frameNames = {
+        bronze: 'Bronz',
+        silver: 'Gümüş',
+        gold: 'Altın',
+        diamond: 'Elmas',
+        master: 'Usta'
+    };
+    
+    const badgeNames = {
+        first_champion: 'İlk Şampiyon',
+        ten_streak: '10 Galibiyet Serisi',
+        hundred_matches: '100 Düello',
+        top_100: 'İlk 100 Oyuncu'
+    };
+    
+    document.getElementById('profile-theme').innerText = themeNames[profile.selectedTheme] || 'Klasik';
+    document.getElementById('profile-effect').innerText = effectNames[profile.selectedEffect] || 'Normal';
+    document.getElementById('profile-frame').innerText = profile.selectedFrame ? frameNames[profile.selectedFrame] : 'Yok';
+    document.getElementById('profile-badge').innerText = profile.selectedBadge ? badgeNames[profile.selectedBadge] : 'Yok';
+
+    showScreen('profile');
+}
+
+async function openLeaderboardScreen() {
+    const response = await fetch('/api/leaderboard?limit=50');
+    
+    if (!response.ok) {
+        showToast('Liderlik tablosu yüklenemedi.', 'error');
+        return;
+    }
+
+    const data = await response.json();
+    const users = data.users || [];
+
+    const leagues = {
+        BRONZE: { min: 0, max: 199, name: 'Bronz', emoji: '🥉' },
+        SILVER: { min: 200, max: 499, name: 'Gümüş', emoji: '🥈' },
+        GOLD: { min: 500, max: 999, name: 'Altın', emoji: '🥇' },
+        PLATINUM: { min: 1000, max: 1999, name: 'Platin', emoji: '💎' },
+        DIAMOND: { min: 2000, max: 3499, name: 'Elmas', emoji: '💠' },
+        MASTER: { min: 3500, max: Infinity, name: 'Usta', emoji: '👑' }
+    };
+
+    function getLeague(rp) {
+        for (const league of Object.values(leagues)) {
+            if (rp >= league.min && rp <= league.max) return league;
+        }
+        return leagues.BRONZE;
+    }
+
+    const leaderboardHtml = users.map((user, index) => {
+        const league = getLeague(user.rankPoints);
+        return `
+            <div class="leaderboard-row">
+                <div class="lb-rank">${index + 1}</div>
+                <div class="lb-user">${user.userId}</div>
+                <div class="lb-league">${league.emoji} ${league.name}</div>
+                <div class="lb-stats">W: ${user.wins} | L: ${user.losses} | RP: ${user.rankPoints}</div>
+            </div>
+        `;
+    }).join('');
+
+    document.getElementById('leaderboard-table').innerHTML = leaderboardHtml;
+    showScreen('leaderboard');
+}
+
+// --- Shop Screen ---
+let currentShopTab = 'themes';
+let shopData = null;
+
+async function openShopScreen() {
+    const response = await fetch('/api/shop', {
+        headers: { 'Authorization': `Bearer ${jwtToken}` }
+    });
+    
+    if (!response.ok) {
+        showToast('Mağaza yüklenemedi.', 'error');
+        return;
+    }
+
+    shopData = await response.json();
+    document.getElementById('shop-coins').innerText = shopData.balance;
+    
+    currentShopTab = 'themes';
+    renderShopTab('themes');
+    showScreen('shop');
+}
+
+function switchShopTab(tab, button) {
+    currentShopTab = tab;
+    document.querySelectorAll('.shop-tab').forEach(t => t.classList.remove('active'));
+    if (button) button.classList.add('active');
+    renderShopTab(tab);
+}
+
+function renderShopTab(tab) {
+    const content = document.getElementById('shop-content');
+    let items = [];
+    
+    if (tab === 'themes') items = shopData.themes;
+    else if (tab === 'effects') items = shopData.effects;
+    else if (tab === 'frames') items = shopData.frames;
+    else if (tab === 'badges') items = shopData.badges;
+    
+    const html = items.map(item => {
+        const isOwned = item.owned;
+        const isSelected = item.selected;
+        const isAvailable = item.available !== false;
+        let buttonClass = 'btn-primary small-btn';
+        let buttonText = item.price > 0 ? `${item.price} 💎` : 'Ücretsiz';
+        let buttonAction = `buyCosmeticItem('${tab}', '${item.id}')`;
+        let buttonDisabled = false;
+
+        if (!isAvailable) {
+            buttonClass = 'btn-disabled small-btn';
+            buttonText = 'Kilitli';
+            buttonDisabled = true;
+        } else if (isOwned) {
+            buttonClass = isSelected ? 'btn-success small-btn' : 'btn-secondary small-btn';
+            buttonText = isSelected ? '✓ Seçili' : 'Seç';
+            buttonAction = `selectCosmeticItem('${tab}', '${item.id}')`;
+        }
+
+        return `
+            <div class="shop-item">
+                <div class="item-header">
+                    <span class="item-emoji">${item.emoji}</span>
+                    <span class="item-name">${item.name}</span>
+                </div>
+                <div class="item-desc">${item.description}</div>
+                <button class="${buttonClass}" ${buttonDisabled ? 'disabled' : ''} onclick="${buttonDisabled ? '' : buttonAction}">${buttonText}</button>
+            </div>
+        `;
+    }).join('');
+    
+    content.innerHTML = html;
+}
+
+async function buyCosmeticItem(type, itemId) {
+    const normalizedType = SHOP_TYPE_MAP[type] || type;
+    console.log(`[Shop] Satın alma başladı - Tip: ${type} (${normalizedType}), ürün: ${itemId}`);
+    
+    const response = await fetch('/api/shop/buy', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${jwtToken}`
+        },
+        body: JSON.stringify({ type: normalizedType, itemId })
+    });
+    
+    const result = await response.json();
+    console.log(`[Shop] Yanıt:`, result);
+    
+    if (response.ok) {
+        showToast(result.message || 'Satın alma başarılı!', 'success');
+        await openShopScreen();
+    } else {
+        const errorMsg = result.error || result.message || 'Satın alma başarısız.';
+        console.error(`[Shop] Hata: ${errorMsg}`);
+        showToast(errorMsg, 'error');
+    }
+}
+
+async function selectCosmeticItem(type, itemId) {
+    const normalizedType = SHOP_TYPE_MAP[type] || type;
+    console.log(`[Shop] Seçim başladı - Tip: ${type} (${normalizedType}), ürün: ${itemId}`);
+    
+    const response = await fetch('/api/shop/select', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${jwtToken}`
+        },
+        body: JSON.stringify({ type: normalizedType, itemId })
+    });
+    
+    const result = await response.json();
+    console.log(`[Shop] Yanıt:`, result);
+    
+    if (response.ok) {
+        showToast(result.message || 'Seçim başarılı!', 'success');
+        await openShopScreen();
+    } else {
+        const errorMsg = result.error || result.message || 'Seçim başarısız.';
+        console.error(`[Shop] Hata: ${errorMsg}`);
+        showToast(errorMsg, 'error');
+    }
+}
+
+function applyTheme(themeId) {
+    const theme = THEME_PALETTES[themeId] || THEME_PALETTES.classic;
+    document.documentElement.style.setProperty('--bg-color', theme.bgColor);
+    document.documentElement.style.setProperty('--neon-cyan', theme.primary);
+    document.documentElement.style.setProperty('--neon-pink', theme.secondary);
 }
 
 function formatTime(ms) {
