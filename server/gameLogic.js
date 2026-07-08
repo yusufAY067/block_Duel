@@ -30,6 +30,16 @@ const SHAPES = [
     [[1, 1, 1], [0, 0, 1], [0, 0, 1]]
 ];
 
+const RESCUE_SHAPES = [
+    [[1]],
+    [[1, 1]],
+    [[1], [1]],
+    [[1, 0], [1, 1]],
+    [[0, 1], [1, 1]],
+    [[1, 1], [1, 0]],
+    [[1, 1], [0, 1]]
+];
+
 class GameLogic {
     constructor() {
         this.grid = Array(8).fill(null).map(() => Array(8).fill(0));
@@ -37,47 +47,115 @@ class GameLogic {
         this.combo = 0;
         this.currentShapes = [];
         this.secondChanceUsed = false;
+        this.movesWithoutClearing = 0;
         this.generateShapes();
     }
 
     generateShapes() {
-        this.currentShapes = [];
-        const useSmartBlock = Math.random() < 0.3;
-        let smartShapePlaced = false;
-
-        // Find all playable shapes on current grid
-        const playableShapes = [];
-        for (let i = 0; i < SHAPES.length; i++) {
-            if (this.canPlaceAnywhere(SHAPES[i])) {
-                playableShapes.push(SHAPES[i]);
-            }
-        }
-
+        const generatedShapes = [];
         for (let i = 0; i < 3; i++) {
-            let selectedShape = null;
+            generatedShapes.push(this.getRandomShape());
+        }
 
-            if (useSmartBlock && !smartShapePlaced && playableShapes.length > 0) {
-                // Pick a random playable shape (could be improved to find line-completing shapes)
-                selectedShape = playableShapes[Math.floor(Math.random() * playableShapes.length)];
-                smartShapePlaced = true;
-            } else {
-                // Random block (70% chance or if smart already used)
-                const randomIndex = Math.floor(Math.random() * SHAPES.length);
-                selectedShape = SHAPES[randomIndex];
+        const shouldUseRescue = this.movesWithoutClearing >= 5;
+        const hasPlayableShape = this.hasAnyPlayableShape(generatedShapes);
+
+        if (!hasPlayableShape) {
+            const rescueShape = this.selectRescueShape({ preferLineClear: shouldUseRescue });
+            if (rescueShape) {
+                const indexToReplace = this.findReplacementIndex(generatedShapes);
+                if (indexToReplace !== -1) {
+                    generatedShapes[indexToReplace] = rescueShape;
+                }
             }
-
-            this.currentShapes.push({
-                id: Math.random().toString(36).substring(7),
-                shape: selectedShape
-            });
+        } else if (shouldUseRescue) {
+            const rescueShape = this.selectRescueShape({ preferLineClear: true });
+            if (rescueShape) {
+                const indexToReplace = this.findReplacementIndex(generatedShapes, { preferUnplayableOnly: true });
+                if (indexToReplace !== -1) {
+                    generatedShapes[indexToReplace] = rescueShape;
+                }
+            }
         }
 
-        // Safety Net: If NONE of the 3 generated blocks are playable, but there ARE playable blocks available
-        // replace one with a playable block to avoid unfair game over right after generation.
-        if (!this.checkIfAnyPlayableInTray() && playableShapes.length > 0) {
-            const indexToReplace = Math.floor(Math.random() * 3);
-            this.currentShapes[indexToReplace].shape = playableShapes[Math.floor(Math.random() * playableShapes.length)];
+        this.currentShapes = generatedShapes.map(shape => ({
+            id: Math.random().toString(36).substring(7),
+            shape
+        }));
+    }
+
+    getRandomShape() {
+        const randomIndex = Math.floor(Math.random() * SHAPES.length);
+        return SHAPES[randomIndex];
+    }
+
+    hasAnyPlayableShape(shapePool) {
+        return shapePool.some(shape => this.canPlaceAnywhere(shape));
+    }
+
+    findReplacementIndex(shapePool, options = {}) {
+        const { preferUnplayableOnly = false } = options;
+        const indices = shapePool
+            .map((shape, index) => ({ shape, index }))
+            .filter(({ shape, index }) => {
+                const isPlayable = this.canPlaceAnywhere(shape);
+                return preferUnplayableOnly ? !isPlayable : true;
+            })
+            .map(({ index }) => index);
+
+        if (indices.length === 0) {
+            return -1;
         }
+
+        return indices[Math.floor(Math.random() * indices.length)];
+    }
+
+    selectRescueShape({ preferLineClear = false } = {}) {
+        const candidates = [...RESCUE_SHAPES];
+        const playableCandidates = candidates.filter(shape => this.canPlaceAnywhere(shape));
+
+        if (playableCandidates.length === 0) {
+            return null;
+        }
+
+        if (preferLineClear) {
+            const lineClearCandidates = playableCandidates.filter(shape => this.canCreateLineOrColumn(shape));
+            if (lineClearCandidates.length > 0) {
+                return lineClearCandidates[Math.floor(Math.random() * lineClearCandidates.length)];
+            }
+        }
+
+        return playableCandidates[Math.floor(Math.random() * playableCandidates.length)];
+    }
+
+    canCreateLineOrColumn(shapeMatrix) {
+        for (let r = 0; r < 8; r++) {
+            for (let c = 0; c < 8; c++) {
+                if (!this.canPlace(c, r, shapeMatrix)) {
+                    continue;
+                }
+
+                const simulatedGrid = this.grid.map(row => [...row]);
+                for (let shapeRow = 0; shapeRow < shapeMatrix.length; shapeRow++) {
+                    for (let shapeCol = 0; shapeCol < shapeMatrix[0].length; shapeCol++) {
+                        if (shapeMatrix[shapeRow][shapeCol] === 1) {
+                            simulatedGrid[r + shapeRow][c + shapeCol] = 1;
+                        }
+                    }
+                }
+
+                const createsLine = simulatedGrid.some(row => row.every(cell => cell === 1)) ||
+                    Array.from({ length: 8 }, (_, idx) => idx).some(colIndex => {
+                        return simulatedGrid.every(row => row[colIndex] === 1);
+                    });
+
+                if (createsLine) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     canPlaceAnywhere(shapeMatrix) {
@@ -107,7 +185,7 @@ class GameLogic {
                 this.secondChanceUsed = true;
                 console.log("Player out of moves. Triggering second chance.");
                 this.generateShapes();
-                
+
                 // Check again with new shapes
                 if (!this.checkIfAnyPlayableInTray()) {
                     return true; // Still can't move, true game over
@@ -158,7 +236,7 @@ class GameLogic {
                 }
             }
         }
-        
+
         this.score += blocksPlaced;
         this.currentShapes[shapeIndex] = null;
 
@@ -168,7 +246,7 @@ class GameLogic {
 
         const effect = this.checkLines();
         const finalEffect = effect || { clearedRows: [], clearedCols: [], scoreAdded: 0, combo: 0 };
-        
+
         // After placing block and potentially generating new ones, check for game over
         finalEffect.gameOver = this.checkGameOver();
 
@@ -200,7 +278,8 @@ class GameLogic {
 
         if (totalLines > 0) {
             this.combo++;
-            
+            this.movesWithoutClearing = 0;
+
             linesToClear.rows.forEach(r => {
                 this.grid[r] = Array(8).fill(0);
             });
@@ -228,6 +307,7 @@ class GameLogic {
             };
         } else {
             this.combo = 0;
+            this.movesWithoutClearing++;
             return null;
         }
     }
