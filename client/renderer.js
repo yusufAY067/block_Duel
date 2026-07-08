@@ -9,9 +9,9 @@ class Renderer {
         this.oppCanvas = document.getElementById('opponent-canvas');
         this.oppCtx = this.oppCanvas.getContext('2d');
 
-        this.cellSize = 50; // 400px / 8
-        this.oppCellSize = 20; // 160px / 8
-        this.shapeCellSize = 25; // Smaller cells for the tray
+        this.cellSize = 50; // fallback
+        this.oppCellSize = 20; // fallback
+        this.shapeCellSize = 25; // fallback
 
         this.myState = null;
         this.oppState = null;
@@ -25,6 +25,8 @@ class Renderer {
         this.effects = [];
 
         this.setupEventListeners();
+        this.resizeCanvases();
+        window.addEventListener('resize', this.resizeCanvases.bind(this));
         this.loop();
     }
 
@@ -37,13 +39,53 @@ class Renderer {
         this.shapesCanvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
             const touch = e.touches[0];
-            this.handleShapesMouseDown({ offsetX: touch.clientX - this.shapesCanvas.getBoundingClientRect().left, offsetY: touch.clientY - this.shapesCanvas.getBoundingClientRect().top });
+            const rect = this.shapesCanvas.getBoundingClientRect();
+            this.handleShapesMouseDown({
+                offsetX: touch.clientX - rect.left,
+                offsetY: touch.clientY - rect.top,
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
         });
         document.addEventListener('touchmove', (e) => {
             const touch = e.touches[0];
             this.handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
         }, { passive: false });
-        document.addEventListener('touchend', this.handleMouseUp.bind(this));
+        document.addEventListener('touchend', (e) => {
+            const touch = e.changedTouches?.[0];
+            this.handleMouseUp({
+                clientX: touch?.clientX,
+                clientY: touch?.clientY,
+                changedTouches: e.changedTouches
+            });
+        });
+    }
+
+    resizeCanvases() {
+        const dpr = window.devicePixelRatio || 1;
+
+        const mainRect = this.mainCanvas.getBoundingClientRect();
+        const mainWidth = Math.max(240, Math.min(400, Math.floor(mainRect.width || 320)));
+        const mainHeight = mainWidth;
+        this.mainCanvas.width = Math.round(mainWidth * dpr);
+        this.mainCanvas.height = Math.round(mainHeight * dpr);
+        this.mainCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        this.cellSize = mainWidth / 8;
+
+        const shapesRect = this.shapesCanvas.getBoundingClientRect();
+        const shapesWidth = Math.max(260, Math.floor(shapesRect.width || 320));
+        const shapesHeight = Math.max(110, Math.min(150, Math.floor(shapesRect.height || 140)));
+        this.shapesCanvas.width = Math.round(shapesWidth * dpr);
+        this.shapesCanvas.height = Math.round(shapesHeight * dpr);
+        this.shapesCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        this.shapeCellSize = Math.max(18, Math.min(28, Math.floor(shapesWidth / 15)));
+
+        const oppRect = this.oppCanvas.getBoundingClientRect();
+        const oppSize = Math.max(120, Math.min(160, Math.floor(oppRect.width || 160)));
+        this.oppCanvas.width = Math.round(oppSize * dpr);
+        this.oppCanvas.height = Math.round(oppSize * dpr);
+        this.oppCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        this.oppCellSize = oppSize / 8;
     }
 
     handleShapesMouseDown(e) {
@@ -51,11 +93,15 @@ class Renderer {
 
         const x = e.offsetX;
         const y = e.offsetY;
+        const rect = this.shapesCanvas.getBoundingClientRect();
+        const canvasWidth = rect.width || this.shapesCanvas.clientWidth || 320;
+        const padding = Math.max(10, Math.floor(canvasWidth * 0.08));
+        const zoneWidth = Math.max(70, Math.floor((canvasWidth - padding * 2) / 3));
 
         const zones = [
-            { startX: 20, endX: 120 },
-            { startX: 140, endX: 240 },
-            { startX: 260, endX: 360 }
+            { startX: padding, endX: padding + zoneWidth },
+            { startX: padding + zoneWidth, endX: padding + zoneWidth * 2 },
+            { startX: padding + zoneWidth * 2, endX: canvasWidth - padding }
         ];
 
         for (let i = 0; i < 3; i++) {
@@ -69,9 +115,9 @@ class Renderer {
                 this.dragOffset.x = shapeWidth / 2;
                 this.dragOffset.y = shapeHeight / 2;
                 
-                const rect = this.mainCanvas.getBoundingClientRect();
-                this.dragPos.x = e.clientX || x + this.shapesCanvas.getBoundingClientRect().left;
-                this.dragPos.y = e.clientY || y + this.shapesCanvas.getBoundingClientRect().top;
+                const mainRect = this.mainCanvas.getBoundingClientRect();
+                this.dragPos.x = e.clientX || x + rect.left;
+                this.dragPos.y = e.clientY || y + rect.top;
                 
                 break;
             }
@@ -249,9 +295,9 @@ class Renderer {
     }
 
     render() {
-        this.mainCtx.clearRect(0, 0, this.mainCanvas.width, this.mainCanvas.height);
-        this.shapesCtx.clearRect(0, 0, this.shapesCanvas.width, this.shapesCanvas.height);
-        this.oppCtx.clearRect(0, 0, this.oppCanvas.width, this.oppCanvas.height);
+        this.mainCtx.clearRect(0, 0, this.mainCanvas.clientWidth, this.mainCanvas.clientHeight);
+        this.shapesCtx.clearRect(0, 0, this.shapesCanvas.clientWidth, this.shapesCanvas.clientHeight);
+        this.oppCtx.clearRect(0, 0, this.oppCanvas.clientWidth, this.oppCanvas.clientHeight);
 
         if (this.myState) {
             this.drawGrid(this.mainCtx, this.myState.grid, this.cellSize, 'rgba(255,255,255,0.03)', '#00F0FF');
